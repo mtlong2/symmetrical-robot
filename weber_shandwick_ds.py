@@ -14,19 +14,21 @@
 import numpy as np, pandas as pd, re, matplotlib.pyplot as plt, seaborn as sns, nltk, string
 import warnings, itertools
 warnings.filterwarnings('ignore', category=DeprecationWarning)
-from nltk.stem.porter import *
+from nltk.tokenize import word_tokenize
 from utils import *
+%matplotlib inline
 from keras.preprocessing.sequence import pad_sequences
 from keras.preprocessing.text import Tokenizer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
-from keras.callbacks import EarlyStopping
 from keras.models import Sequential
-from keras.layers import Dense, LSTM, Embedding, Dropout
+from keras.layers import Dense, LSTM, Embedding, Dropout, Flatten
 import keras
-%matplotlib inline
+from keras.optimizers import Adam
+from keras.callbacks import EarlyStopping
 
 
 
@@ -164,13 +166,71 @@ X_train_seq, X_val_seq, y_trainRNN, y_valRNN, X_train, X_val, y_train, y_val = s
 print(X_train_seq.shape, X_val_seq.shape, y_train.shape, y_val.shape)
 
 
-# baseline model logistic regression 
+seed = 7
+np.random.seed(seed)
 
+
+# Establish baseline models, fit the models on train set, evaluate on validation set
+
+# Build logistic regression model
+classifier = LogisticRegression()
+classifier.fit(X_train_seq, y_train)
+lr_score = classifier.score(X_val_seq, y_val)
+lr_yhat_val = classifier.predict(X_val_seq)
+print('Accuracy for tweet sentiment with Logistic Regression: {:.3f}%'.format(lr_score*100))
+
+# plot confusion matrix
+plt.figure(1, figsize=(5,5))
+cm = confusion_matrix(y_val, lr_yhat_val)
+sns.heatmap(cm.T, square=True, annot=True, fmt='d', cbar=False,
+           xticklabels=['Positive', 'Neutral', 'Negative'], yticklabels=['Positive', 'Neutral', 'Negative'])
+plt.title('Logisitic Regression Confusion Matrix - Validation Set')
+plt.xlabel('true label')
+plt.ylabel('predicted label')
+
+
+# Build Naive Bayes Model
+model = MultinomialNB()
+model.fit(X_train_seq, y_train)
+bayes_score = model.score(X_val_seq, y_val)
+bayes_yhat_val = model.predict(X_val_seq)
+print('Accuracy for tweet sentiment with Naive Bayes: {:.3f}%'.format(bayes_score*100))
+
+# plot confusion matrix
+plt.figure(2, figsize=(5,5))
+cm = confusion_matrix(y_val, bayes_yhat_val)
+sns.heatmap(cm.T, square=True, annot=True, fmt='d', cbar=False,
+           xticklabels=['Positive', 'Neutral', 'Negative'], yticklabels=['Positive', 'Neutral', 'Negative'])
+plt.title('Navies Bayes Confusion Matrix - Validation')
+plt.xlabel('true label')
+plt.ylabel('predicted label')
+
+
+# define baseline FF model
+def baseline_model():
+	# create model
+	model = Sequential()
+	model.add(Dense(200, input_dim=40, activation='relu'))
+	model.add(Dense(3, activation='softmax'))
+	# Compile model
+	model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
+	return base_model
+
+from keras.wrappers.scikit_learn import KerasClassifier
+from sklearn.model_selection import KFold, cross_val_score
+
+estimator = KerasClassifier(build_fn=base_model, epochs=6, batch_size=96, verbose=0)
+
+
+kfold = KFold(n_splits=10, shuffle=True, random_state=seed)
+
+results = cross_val_score(estimator, X_train_seq, y_train , cv=kfold)
+print("Baseline: %.2f%% (%.2f%%)" % (results.mean()*100, results.std()*100))
 
 
 # create a plot of the history
 def plot_hist(history):
-	''' visually monitor train vs validation accuracy and loss '''
+    ''' visually monitor train vs validation accuracy and loss '''
     acc = history.history['acc']
     val_acc = history.history['val_acc']
     loss = history.history['loss']
@@ -191,53 +251,32 @@ def plot_hist(history):
     plt.legend()
 
 
-
-seed = 7
-np.random.seed(seed)
-
-# define baseline FF model
-def baseline_model():
-	# create model
-	model = Sequential()
-	model.add(Dense(200, input_dim=40, activation='relu'))
-	model.add(Dense(3, activation='softmax'))
-	# Compile model
-	model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
-	return model
-
-from keras.wrappers.scikit_learn import KerasClassifier
-from sklearn.model_selection import KFold, cross_val_score
-
-estimator = KerasClassifier(build_fn=baseline_model, epochs=6, batch_size=96, verbose=0)
-
-
-kfold = KFold(n_splits=10, shuffle=True, random_state=seed)
-
-results = cross_val_score(estimator, X_train_seq, y_train , cv=kfold)
-print("Baseline: %.2f%% (%.2f%%)" % (results.mean()*100, results.std()*100))
-
-
 def lstm_net(vocab_size, embedding_size, maxlen):
-     model = Sequential()
-     model.add(Embedding(vocab_size, embedding_size, input_length=maxlen))
-     model.add(LSTM(40, dropout=0.15, return_sequences=True))
-     model.add(LSTM(40, dropout=0.3))
-     model.add(Dense(3, activation='softmax'))
-     model.summary()
-     model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc'])
 
-     return model_lstm
+    model = Sequential()
+    model.add(Embedding(vocab_size, embedding_size, input_length=maxlen))
+    model.add(LSTM(250, dropout=0.4, activation='relu', return_sequences=True))
+    model.add(LSTM(250, dropout=0.4, activation='relu', return_sequences=True))
+    model.add(LSTM(150, dropout=0.5, activation='relu'))
+    model.add(Dense(3, activation='softmax'))
+    optimizer = Adam(lr=0.0003, beta_1=0.91)
+    model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['acc'])
+    es = [EarlyStopping(monitor='val_loss', min_delta=0.0001, mode='min', patience=15, verbose=1)]
+
+    return model_lstm
 
 
 print(model.summary())
 
 # train the model
 
-batch_size = 40
+batch_size = 64
 num_epochs = 10
 
-history = model.fit(X_train_seq, y_train, validation_data=(X_val_seq, y_val), 
-          batch_size=batch_size, epochs=num_epochs)
+def fit_lstm(model_lstm, X_train_seq, y_trainRNN, batch_size, num_epochs):
+    history = model.fit(X_train_seq, y_trainRNN, epochs=num_epochs, batch_size=batch_size, validation_data=(X_val_seq, y_valRNN),
+                    callbacks=es, verbose=1, shuffle=False)
+    return history
 
 plot_hist(history)
 
@@ -259,28 +298,26 @@ def run_evaluation_set(evaluate):
 	# set vectors to process in the network
 	X_eval_seq = pad_sequences(sequences, maxlen=40)
 
-	y_hat = []
-	yhat = model.predict(X_eval_seq, verbose=1)
-	y_hat.append(yhat)
+    # predict on evaluation data
+	y_hat = model.predict(X_eval_seq, verbose=1)
 
 	return y_hat, y_evalRNN, X_eval_seq
 
-print('First Prediction :', yhat[0])
-
-
+# inverse sentiment matrix back to scalar
 y_orig = [np.argmax(y, axis=None, out=None) for y in y_evalRNN]
 
-def lstm_prediction_accuracy(y_orig, y_evalRNN):
-	count = 0
-	for i in range(len(y_orig)):
-    	if y_orig[i] == prediction[i]:
-        count += 1
-    count
-    return count/y_evalRNN[0]
+def lstm_accuracy(y_orig,y_hat):
+    count =0
+    for i in range(len(y_orig)):
+        if y_orig[i] == y_hat[i]:
+            count += 1
+        count
+    return count/y_hat.shape[0]
+
+lstm_accuracy(y_orig,y_hat)
 
 
-
-# run classification report and confusion matrix to identify issues are
+# add confusion, classification report, ROC, AUC
 
 
 
