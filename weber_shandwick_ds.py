@@ -86,8 +86,6 @@ def clean_content(tweets):
 
 clean_content(combine)[:3]
 
-
-
 def remove_stopwords(tweets):
 	''' short script to remove stopwords using the stemming function'''
     tokenized_twt = combine['clean_content'].apply(lambda x: x.split())
@@ -150,10 +148,10 @@ def separate_train_data(df_train):
 	X_pad = pad_sequences(sequences, maxlen=maxlen)
 
 	# split into train and validation set
-	X_train_seq, X_val_seq, y_trainRNN, y_valRNN = train_test_split(X_pad, y_rnn, random_state=44, test_size=0.2)
+	X_train_seq, X_val_seq, y_trainRNN, y_valRNN = train_test_split(X_pad, y_rnn, random_state=7, test_size=0.2)
 
 	# split into train and validation set logistic regression
-	X_train, X_val, y_train, y_val = train_test_split(sequences, y, random_state=44, test_size=0.2)
+	X_train, X_val, y_train, y_val = train_test_split(sequences, y, random_state=7, test_size=0.2)
 
 	
 	return X_train_seq, X_val_seq, y_trainRNN, y_valRNN, X_train, X_val, y_train, y_val
@@ -163,7 +161,7 @@ X_train_seq, X_val_seq, y_trainRNN, y_valRNN, X_train, X_val, y_train, y_val = s
 
 
 # confirm n-dims
-print(X_train_seq.shape, X_val_seq.shape, y_train.shape, y_val.shape)
+print(X_train_seq.shape, X_val_seq.shape, y_train.shape, y_val.shape, y_trainRNN.shape, y_valRNN.shape)
 
 
 seed = 7
@@ -196,7 +194,7 @@ bayes_score = model.score(X_val_seq, y_val)
 bayes_yhat_val = model.predict(X_val_seq)
 print('Accuracy for tweet sentiment with Naive Bayes: {:.3f}%'.format(bayes_score*100))
 
-# plot confusion matrix
+# plot confusion matrix and classification report
 plt.figure(2, figsize=(5,5))
 cm = confusion_matrix(y_val, bayes_yhat_val)
 sns.heatmap(cm.T, square=True, annot=True, fmt='d', cbar=False,
@@ -204,6 +202,39 @@ sns.heatmap(cm.T, square=True, annot=True, fmt='d', cbar=False,
 plt.title('Navies Bayes Confusion Matrix - Validation')
 plt.xlabel('true label')
 plt.ylabel('predicted label')
+print(classification_report(y_val,bayes_yhat_val)) 
+print('Naive Bayes - Validation Set:',accuracy_score(y_val, bayes_yhat_val))
+
+# Random Forest 
+RF_classifier = RandomForestClassifier(n_estimators=250, random_state=7)
+RF_clf = RF_classifier.fit(X_train_seq, y_train)
+RF_norm_pred = RF_clf.predict(X_val_seq)
+
+# Plot confusion and classification report
+RF_cm = confusion_matrix(y_val,RF_norm_pred)
+plt.figure(3, figsize=(5,5))
+sns.heatmap(RF_cm.T, square=True, annot=True, fmt='d', cbar=False,
+           xticklabels=['Positive', 'Neutral', 'Negative'], yticklabels=['Positive', 'Neutral', 'Negative'])
+plt.title('Random Forest Confusion Matrix - Validation Set')
+plt.xlabel('true label')
+plt.ylabel('predicted label')
+print(classification_report(y_val,RF_norm_pred))  
+print('Random Forest accuracy - Validation Set:',accuracy_score(y_val, RF_norm_pred))
+
+# Gradient Boosting
+grad_classifier = GradientBoostingClassifier(n_estimators=250, random_state=7)
+grad_clf = grad_classifier.fit(X_train_seq, y_train)
+grad_pred = grad_clf.predict(X_val_seq)
+
+Grad_cm = confusion_matrix(y_val,grad_pred)
+plt.figure(4, figsize=(5,5))
+sns.heatmap(Grad_cm.T, square=True, annot=True, fmt='d', cbar=False,
+           xticklabels=['Positive', 'Neutral', 'Negative'], yticklabels=['Positive', 'Neutral', 'Negative'])
+plt.title('Adaboost Gradient Confusion Matrix - Validation Set')
+plt.xlabel('true label')
+plt.ylabel('predicted label')
+print(classification_report(y_val,grad_pred))  
+print('Gradient boostint accuracy: ', accuracy_score(y_val, grad_pred)) 
 
 
 # define baseline FF model
@@ -219,7 +250,7 @@ def baseline_model():
 from keras.wrappers.scikit_learn import KerasClassifier
 from sklearn.model_selection import KFold, cross_val_score
 
-estimator = KerasClassifier(build_fn=base_model, epochs=6, batch_size=96, verbose=0)
+estimator = KerasClassifier(build_fn=base_model, epochs=6, batch_size=128, verbose=0)
 
 
 kfold = KFold(n_splits=10, shuffle=True, random_state=seed)
@@ -255,13 +286,13 @@ def lstm_net(vocab_size, embedding_size, maxlen):
 
     model = Sequential()
     model.add(Embedding(vocab_size, embedding_size, input_length=maxlen))
-    model.add(LSTM(250, dropout=0.4, activation='relu', return_sequences=True))
-    model.add(LSTM(250, dropout=0.4, activation='relu', return_sequences=True))
-    model.add(LSTM(150, dropout=0.5, activation='relu'))
+    model.add(Bidirectional(LSTM(512, dropout=0.55, activation='relu', return_sequences=True)))
+    model.add(TimeDistributed(Dense(50, activation='relu')))
+    model.add(Flatten())
     model.add(Dense(3, activation='softmax'))
     optimizer = Adam(lr=0.0003, beta_1=0.91)
     model.compile(loss='categorical_crossentropy', optimizer=optimizer, metrics=['acc'])
-    es = [EarlyStopping(monitor='val_loss', min_delta=0.0001, mode='min', patience=15, verbose=1)]
+    es = [EarlyStopping(monitor='val_loss', min_delta=0.0001, mode='min', patience=4, verbose=1)]
 
     return model_lstm
 
@@ -270,21 +301,29 @@ print(model.summary())
 
 # train the model
 
-batch_size = 64
-num_epochs = 10
+batch_size = 128
+num_epochs = 15
+callbacks=[EarlyStopping(patience=4, monitor='val_loss'),
+           ModelCheckpoint(filepath=save_dir + "/" + 'my_model_twitter_analysis.{epoch:02d}-{val_loss:.2f}.hdf5',\
+                           monitor='val_loss', verbose=0, mode='auto', period=2)]
 
-def fit_lstm(model_lstm, X_train_seq, y_trainRNN, batch_size, num_epochs):
-    history = model.fit(X_train_seq, y_trainRNN, epochs=num_epochs, batch_size=batch_size, validation_data=(X_val_seq, y_valRNN),
-                    callbacks=es, verbose=1, shuffle=False)
+save_dir = 'save/NLP'
+def fit_lstm(model_lstm, X_train_seq, y_trainRNN, batch_size, num_epochs, save_dir, callbacks):
+    history = model.fit(X_smote, y_trainRNN, epochs=num_epochs, batch_size=batch_size, validation_data=(X_val_seq, y_valRNN),
+                    callbacks=callbacks, verbose=1, shuffle=False)
+
+    # save the model
+    save(save_dir + "/" + 'my_model_generate_sentences.h5')
+    
     return history
+
 
 plot_hist(history)
 
 
-
 def run_evaluation_set(evaluate):
 	'''separate evaluation data set into independent and dependent var, tokenize and pad sequences
-	for lstm net.  returns yhat prediction'''
+	for models.  returns yhat prediction'''
 
 	# process evaluation data for network
 	evaluate_data = evaluate.values
@@ -301,7 +340,10 @@ def run_evaluation_set(evaluate):
     # predict on evaluation data
 	y_hat = model.predict(X_eval_seq, verbose=1)
 
-	return y_hat, y_evalRNN, X_eval_seq
+	return y_eval, y_evalRNN, X_eval_seq, y_hat
+
+
+y_eval, y_evalRNN, X_eval_seq, y_hat =run_evaluation_set(evaluate)
 
 # inverse sentiment matrix back to scalar
 y_orig = [np.argmax(y, axis=None, out=None) for y in y_evalRNN]
@@ -314,10 +356,30 @@ def lstm_accuracy(y_orig,y_hat):
         count
     return count/y_hat.shape[0]
 
-lstm_accuracy(y_orig,y_hat)
+Print('LSTM accuracy: ',lstm_accuracy(y_orig,y_hat))
 
 
-# add confusion, classification report, ROC, AUC
+# add confusion, classification report
+
+# process evaluation data for remaining models
+
+lr_yhat_eval = classifier.predict(X_eval_seq)
+bayes_yhat_eval = model.predict(X_eval_seq)
+RF_eval_pred = RF_clf.predict(X_eval_seq)
+grad_eval_pred = grad_clf.predict(X_eval_seq)
+
+print('Classifiction Report for Logistic Regerssion - Test set: ',classification_report(y_eval, lr_yhat_eval))
+print('Logistic Regeression - Test Set:',accuracy_score(y_eval, r_yhat_eval))
+
+print('Classifiction Report for Gradient Boosting - Test set: ',classification_report(y_eval, bayes_yhat_eval))
+print('Naive Bayes accuracy - Test Set:',accuracy_score(y_eval, bayes_yhat_eval))
+
+
+print('Classifiction Report for Random Forest - Test set: ',classification_report(y_eval, RF_eval_pred))
+print('Random Forest accuracy - Test Set:',accuracy_score(y_eval, RF_eval_pred))
+
+print('Classifiction Report for Gradient Boosting - Test set: ',classification_report(y_eval, RF_eval_pred))
+print('Gradient Boosting accuracy - Test Set:',accuracy_score(y_eval, RF_eval_pred))
 
 
 
