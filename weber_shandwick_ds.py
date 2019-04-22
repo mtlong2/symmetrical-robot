@@ -48,6 +48,9 @@ from nltk.stem.porter import *
 train = pd.read_csv('/data/train.csv', encoding='utf-8')
 evaluate = pd.read_csv('/data/evaluate.csv',encoding='utf-8')
 
+# create directory to store trained neural models
+save_dir = ('save/NLP')
+
 # inspect the data, look for any patterns, anomalies 
 print(train.head(10), evaluate.head(10))
 
@@ -306,14 +309,11 @@ callbacks=[EarlyStopping(patience=4, monitor='val_loss'),
            ModelCheckpoint(filepath=save_dir + "/" + 'my_model_twitter_analysis.{epoch:02d}-{val_loss:.2f}.hdf5',\
                            monitor='val_loss', verbose=0, mode='auto', period=2)]
 
-
-save_dir = ('save/NLP')
-
-history = model.fit(X_smote, y_trainRNN, epochs=num_epochs, batch_size=batch_size, validation_data=(X_val_seq, y_valRNN),
+history = model.fit(X_train_seq, y_trainRNN, epochs=num_epochs, batch_size=batch_size, validation_data=(X_val_seq, y_valRNN),
                 callbacks=callbacks, verbose=1, shuffle=False)
 
 # save the model
-save(save_dir + "/" + 'my_model_generate_sentences.h5')
+save(save_dir + "/" + 'my_model_twitter_analysis.h5')
 
 # plot
 plot_hist(history)
